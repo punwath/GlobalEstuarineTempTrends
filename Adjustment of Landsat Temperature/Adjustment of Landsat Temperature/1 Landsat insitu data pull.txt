@@ -1,0 +1,248 @@
+//scalling
+print(stations)
+function applyScaleFactors(image) {
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBands, null, true);
+}
+
+function applyScaleFactors57 (image) {
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBand = image.select('ST_B6').multiply(0.00341802).add(149.0);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBand, null, true);
+}
+
+///=======================
+
+//=======================
+
+var Mndwi = function(image) {
+  return(image
+  // .addBands(Mbsrn(image))
+  .expression('(Green-Swir1) / (Swir1 + Green)', {
+    'Swir1': image.select(['Swir1']),
+    'Green': image.select(['Green'])
+  })).rename('mndwi');
+};
+
+var Mbsrv = function(image) {
+  return(image.select(['Green']).add(image.select(['Red'])).rename('mbsrv'));
+};
+
+var Mbsrv = function(image) {
+  return(image
+  // .addBands(Mbsrn(image))
+  .expression('Green + Red', {
+    'Green': image.select(['Green']),
+    'Red': image.select(['Red'])
+  })).rename('mbsrv');
+};
+
+var Mbsrn = function(image) {
+  return(image
+  // .addBands(Mbsrn(image))
+  .expression('Nir + Swir1', {
+    'Nir': image.select(['Nir']),
+    'Swir1': image.select(['Swir1'])
+  })).rename('mbsrn');
+};
+
+var Ndvi = function(image) {
+  return(image
+  // .addBands(Mbsrn(image))
+  .expression('(Nir - Red) / (Nir + Red)', {
+    'Nir': image.select(['Nir']),
+    'Red': image.select(['Red'])
+  })).rename('ndvi');
+};
+
+
+var Awesh = function(image) {
+  return(image
+  // .addBands(Mbsrn(image))
+  .expression('Blue + 2.5 * Green + (-1.5) * mbsrn + (-0.25) * Swir2', {
+    'Blue': image.select(['Blue']),
+    'Green': image.select(['Green']),
+    'mbsrn': Mbsrn(image).select(['mbsrn']),
+    'Swir2': image.select(['Swir2'])
+  }));
+};
+
+///=======================
+//https://d9-wret.s3.us-west-2.amazonaws.com/assets/palladium/production/s3fs-public/media/files/LSDS-2042_LandsatC2_L3_DSWE_DFCB-v2.pdf
+var Dswe_scaling = function(i) {
+  var mndwi = Mndwi(i);
+  var mbsrv = Mbsrv(i);
+  var mbsrn = Mbsrn(i);
+  var awesh = Awesh(i);
+  var swir1 = i.select(['Swir1']);
+  var nir = i.select(['Nir']);
+  var ndvi = Ndvi(i);
+  var blue = i.select(['Blue']);
+  var swir2 = i.select(['Swir2']);
+  
+  var t1 = mndwi.gt(0.124);
+  var t2 = mbsrv.gt(mbsrn);
+  var t3 = awesh.gt(0);
+  var t4 = mndwi.gt(-0.44)
+  .and(swir1.lt(0.9))
+  .and(nir.lt(0.15))
+  .and(ndvi.lt(0.7));
+  var t5 = mndwi.gt(-0.5)
+  .and(blue.lt(0.1))
+  .and(swir1.lt(0.3))
+  .and(swir2.lt(0.1))
+  .and(nir.lt(0.25));
+  
+  var t = t1.add(t2.multiply(10)).add(t3.multiply(100)).add(t4.multiply(1000)).add(t5.multiply(10000));
+  
+  var noWater = t.eq(0)
+  .or(t.eq(1))
+  .or(t.eq(10))
+  .or(t.eq(100))
+  .or(t.eq(1000));
+  var hWater = t.eq(1111)
+  .or(t.eq(10111))
+  .or(t.eq(11011))
+  .or(t.eq(11101))
+  .or(t.eq(11110))
+  .or(t.eq(11111));
+  var mWater = t.eq(111)
+  .or(t.eq(1011))
+  .or(t.eq(1101))
+  .or(t.eq(1110))
+  .or(t.eq(10011))
+  .or(t.eq(10101))
+  .or(t.eq(10110))
+  .or(t.eq(11001))
+  .or(t.eq(11010))
+  .or(t.eq(11100));
+  var pWetland = t.eq(11000);
+  var lWater = t.eq(11)
+  .or(t.eq(101))
+  .or(t.eq(110))
+  .or(t.eq(1001))
+  .or(t.eq(1010))
+  .or(t.eq(1100))
+  .or(t.eq(10000))
+  .or(t.eq(10001))
+  .or(t.eq(10010))
+  .or(t.eq(10100));
+  
+  var iDswe = noWater.multiply(0)
+  .add(hWater.multiply(1))
+  .add(mWater.multiply(2))
+  .add(pWetland.multiply(3))
+  .add(lWater.multiply(4));
+  var waterMask = iDswe.eq(1).rename('water')
+  return i.updateMask(iDswe.eq(1)).addBands(waterMask)
+};
+
+///========
+var bn8 = ['SR_B2','SR_B3', 'SR_B4', 'SR_B5','SR_B6','SR_B7', 'ST_B10','QA_PIXEL',	'ST_CDIST',	'ST_DRAD',	'ST_EMIS',	'ST_EMSD'	,'ST_QA',	'ST_TRAD',	'ST_URAD']
+var bns = ['Blue', 'Green', 'Red', 'Nir', 'Swir1', 'Swir2', 'TIR1','BQA',	'ST_CDIST',	'ST_DRAD',	'ST_EMIS',	'ST_EMSD'	,'ST_QA',	'ST_TRAD',	'ST_URAD']
+
+var bn57 = ['SR_B1','SR_B2','SR_B3', 'SR_B4', 'SR_B5','SR_B7', 'ST_B6','QA_PIXEL',	'ST_CDIST',	'ST_DRAD',	'ST_EMIS',	'ST_EMSD'	,'ST_QA',	'ST_TRAD',	'ST_URAD']
+
+var l8 = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+  .filterBounds(stations)
+  .sort('CLOUD_COVER')
+  .map(applyScaleFactors)
+  .select(bn8,bns)
+  .map(Dswe_scaling)
+
+
+var l7 = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2")
+  .filterBounds(stations)
+  .sort('CLOUD_COVER')
+  .map(applyScaleFactors57)
+  .select(bn57,bns)
+  .map(Dswe_scaling)
+
+
+var l5 = ee.ImageCollection("LANDSAT/LT05/C02/T1_L2")
+  .filterBounds(stations)
+  .sort('CLOUD_COVER')
+  .map(applyScaleFactors57)
+  .select(bn57,bns)
+  .map(Dswe_scaling)
+
+
+var visualization = {
+  bands: ['Red', 'Green', 'Blue'],
+  min: 0.0,
+  max: 0.3,
+};
+
+var dataset = l5.merge(l7).merge(l8)
+  .filterDate('1986-01-01', '2021-12-31')
+  .filter(ee.Filter.lt('CLOUD_COVER', 30))
+
+
+//Map.addLayer(dataset, visualization, 'True Color (432)');
+//Map.addLayer(stations)
+
+/*var reduced = dataset.map(function(image) {
+  return image
+    .reduceRegions({  // <---- reduceRegions on the Image object
+      collection: stations,
+      reducer: ee.Reducer.median(),
+      scale: 30,
+    })
+    .copyProperties(image, ['system:time_start'])
+    .copyProperties(image, ['system:index']);
+});*/
+
+
+var statCol = dataset.map(function(img) {
+  // Get metadata for the image.
+  var imgDate = img.date().format('YYYY-MM-dd'); 
+  var imgId = img.getString('LANDSAT_ID');
+  var imgSat = img.getString('SATELLITE');
+  var timeSat = img.getString('SCENE_CENTER_TIME');
+  var SUN_AZIMUTHSat = img.getNumber('SUN_AZIMUTH');
+  var SUN_ELEVATIONSat = img.getNumber('SUN_ELEVATION');
+   var time = img.getNumber('system:time_start');
+  // Filter the points to those that intersect the image.
+  var thesePts = dataset.filterBounds(img.geometry());
+  
+  // Reduce the image by mean for the points that intersect it. 
+  var bandStats = img.reduceRegions({
+    collection: stations,
+    reducer: ee.Reducer.mean(),
+    scale: 30
+  })
+  // Add metadata to each point.
+  .map(function(pt) {
+    return pt.set({
+      'imgDate': imgDate,
+      'imgId': imgId,
+      'imgSat': imgSat,
+      'Name': pt.getString('Name'),
+      'timeSat':timeSat,
+      'SUN_AZIMUTHSat':SUN_AZIMUTHSat,
+      'SUN_ELEVATIONSat':SUN_ELEVATIONSat,
+      'time':time
+    });
+  });
+  
+  // Return the featureCollection.
+  return bandStats;
+});
+
+statCol = statCol.flatten();
+
+// Filter out observations where bands stats are null (point fell on masked
+// pixels);
+statCol = statCol.filter(
+  ee.Filter.notNull(['Blue']));
+  
+
+  
+// Export to Google Drive option.
+Export.table.toDrive({
+  collection: statCol,
+  description: 'point_summary_table_gdrive',
+  fileFormat: 'CSV'});
